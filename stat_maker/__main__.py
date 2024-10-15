@@ -4,8 +4,9 @@ import seaborn as sns
 
 from gql import Client
 from gql.transport.requests import RequestsHTTPTransport
-from commiters import Commiters
-from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, GRAPHQL_URL
+
+from .commiters import Commiters
+from .requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, GRAPHQL_URL
 
 
 def get_commiters():
