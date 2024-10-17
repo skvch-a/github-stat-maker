@@ -32,7 +32,6 @@ class Commiters:
 async def get_branch_names(repo_name, client):
     branches_names = []
     cursor = None
-
     while True:
         response = await client.execute_async(BRANCHES_QUERY, variable_values={"repo": repo_name, "cursor": cursor, "owner": ORGANIZATION})
         branches = response["repository"]["refs"]
@@ -45,16 +44,19 @@ async def get_branch_names(repo_name, client):
 
     return branches_names
 
-async def get_commits_for_branch(repo_name, branch_name, client, processed_commits):
+async def get_commits_for_branch(repo_name, branch_name, processed_commits):
     all_commits = []
     is_over = False
     cursor = None
 
     while True:
+        client = get_client()
         response = await client.execute_async(COMMITS_QUERY,
-                                  variable_values={"repo": repo_name, "branch": "refs/heads/" + branch_name,
+                                  variable_values={"repo": repo_name,
+                                                   "branch": "refs/heads/" + branch_name,
                                                    "cursor": cursor,
                                                    "owner": ORGANIZATION})
+        await client.close_async()
         commit_history = response["repository"]["ref"]["target"]["history"]
 
         for commit in commit_history["nodes"]:
@@ -80,20 +82,24 @@ async def get_commiters():
     repo_count = 1
     has_next_page = True
 
+
     while has_next_page:
         client = get_client()
         repos_data = await client.execute_async(REPOS_QUERY, variable_values=variables_for_repos_query)
 
         tasks = []
+
+
         for repo in repos_data["organization"]["repositories"]["nodes"]:
             print(f'Обрабатывается репозиторий: {repo_count} - {repo["name"]}')
             repo_count += 1
             processed_commits = set()
             branch_count = 1
+
             for branch_name in await get_branch_names(repo["name"], client):
                 print(f'\rОбрабатывается ветка: {branch_count} - {branch_name}                     ', end='')
                 branch_count += 1
-                task = asyncio.create_task(get_commits_for_branch(repo["name"], branch_name, client, processed_commits))
+                task = asyncio.create_task(get_commits_for_branch(repo["name"], branch_name, processed_commits))
                 tasks.append(task)
             print()
 
