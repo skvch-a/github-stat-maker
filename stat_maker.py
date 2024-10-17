@@ -110,7 +110,7 @@ async def get_commiters():
 def get_client():
     authorization_header = {"Authorization": f"Bearer {TOKEN}"}
     transport = AIOHTTPTransport(url=GRAPHQL_URL, headers=authorization_header)
-    return Client(transport=transport, fetch_schema_from_transport=True)
+    return Client(transport=transport)
 
 
 def process_stat(stat):
