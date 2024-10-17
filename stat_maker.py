@@ -1,43 +1,51 @@
 import asyncio
-import matplotlib.pyplot as plt
-import numpy as np
-import seaborn as sns
 
 from gql import Client
 from gql.transport.aiohttp import AIOHTTPTransport
-from pandas.plotting import table
 
-from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY
+from visualizer import draw_diagram
+from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION
 
-TOKEN = "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"
-ORGANIZATION = "Tinkoff"
+TOKEN = "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"
 GRAPHQL_URL = "https://api.github.com/graphql"
+SEM = asyncio.Semaphore(5)
 
-class Commiters:
-    def __init__(self):
-        self._authors_by_emails = {}
 
-    def get_top_100(self):
-        return sorted(self._authors_by_emails.items(), key=lambda x: x[1]["commits_count"], reverse=True)[:100]
+def get_top_100(authors_by_emails):
+    return sorted(authors_by_emails.items(), key=lambda x: x[1]["commits_count"], reverse=True)[:100]
 
-    def update(self, commits):
-        for commit in commits:
-            name = commit["author"]["name"]
-            email = commit["author"]["email"]
+async def update_authors(authors_by_emails, commits, lock):
+    for commit in commits:
+        name = commit["author"]["name"]
+        email = commit["author"]["email"]
 
-            if email in self._authors_by_emails:
-                self._authors_by_emails[email]["commits_count"] += 1
+        async with lock:
+            if email in authors_by_emails:
+                authors_by_emails[email]["commits_count"] += 1
             else:
-                self._authors_by_emails[email] = {"name": name, "commits_count": 1}
+                authors_by_emails[email] = {"name": name, "commits_count": 1}
 
+
+async def try_get_response(query, variables):
+    try:
+        return await get_response(query, variables)
+    except Exception as e:
+        print('Ошибочка!', e)
+
+async def get_response(query, variables):
+    client = get_client()
+    response = await client.execute_async(query, variable_values=variables)
+    await client.close_async()
+    return response
 
 async def get_branch_names(repo_name):
     branches_names = []
     cursor = None
-    client = get_client()
 
     while True:
-        response = await client.execute_async(BRANCHES_QUERY, variable_values={"repo": repo_name, "cursor": cursor, "owner": ORGANIZATION})
+
+        response = await try_get_response(BRANCHES_QUERY, {"repo": repo_name, "cursor": cursor, "owner": ORGANIZATION})
+
         branches = response["repository"]["refs"]
         branches_names.extend(branch["name"] for branch in branches["nodes"])
 
@@ -46,22 +54,19 @@ async def get_branch_names(repo_name):
 
         cursor = branches["pageInfo"]["endCursor"]
 
-    await client.close_async()
     return branches_names
 
-async def get_commits_for_branch(repo_name, branch_name, processed_commits):
+async def get_commits_for_branch(repo_name, branch_name, processed_commits, authors_by_emails, lock):
     all_commits = []
     is_over = False
     cursor = None
 
     while True:
-        client = get_client()
-        response = await client.execute_async(COMMITS_QUERY,
-                                  variable_values={"repo": repo_name,
+        response = await try_get_response(COMMITS_QUERY,
+                                         {"repo": repo_name,
                                                    "branch": "refs/heads/" + branch_name,
                                                    "cursor": cursor,
                                                    "owner": ORGANIZATION})
-        await client.close_async()
         commit_history = response["repository"]["ref"]["target"]["history"]
 
         for commit in commit_history["nodes"]:
@@ -78,26 +83,22 @@ async def get_commits_for_branch(repo_name, branch_name, processed_commits):
 
         cursor = commit_history["pageInfo"]["endCursor"]
 
-    return all_commits
-
-async def get_branches(repos_data):
-    tasks = []
-    for repo in repos_data["organization"]["repositories"]["nodes"]:
-        tasks.append(asyncio.create_task(get_branch_names(repo["name"])))
-    return await asyncio.gather(*tasks)
+    await update_authors(authors_by_emails, all_commits, lock)
 
 
-async def process_repo(repo_name):
-    processed_commits = set()
-    tasks = []
-    for branch_name in await get_branch_names(repo_name):
-        task = asyncio.create_task(get_commits_for_branch(repo_name, branch_name, processed_commits))
-        tasks.append(task)
-    return await asyncio.gather(*tasks)
+async def process_repo(repo_name, authors_by_emails):
+    async with SEM:
+        processed_commits = set()
+        tasks = []
+        lock = asyncio.Lock()
+        for branch_name in await get_branch_names(repo_name):
+            task = asyncio.create_task(get_commits_for_branch(repo_name, branch_name, processed_commits, authors_by_emails, lock))
+            tasks.append(task)
+        await asyncio.gather(*tasks)
 
 
 async def get_commiters():
-    commiters = Commiters()
+    authors_by_emails = {}
     variables_for_repos_query = {"org": ORGANIZATION}
 
     repo_count = 1
@@ -105,26 +106,21 @@ async def get_commiters():
 
 
     while has_next_page:
-        client = get_client()
-        repos_data = await client.execute_async(REPOS_QUERY, variable_values=variables_for_repos_query)
-        await client.transport.close()
-        tasks = []
 
+        repos_data = await try_get_response(REPOS_QUERY, variables_for_repos_query)
+
+        tasks = []
 
         for repo in repos_data["organization"]["repositories"]["nodes"]:
             print(f'Обрабатывается репозиторий: {repo_count} - {repo["name"]}')
             repo_count += 1
-            tasks.append(asyncio.create_task(process_repo(repo["name"])))
-
-        commit_histories = await asyncio.gather(*tasks)
-        for commit_history in commit_histories:
-            for commit in commit_history:
-                commiters.update(commit)
+            tasks.append(asyncio.create_task(process_repo(repo["name"], authors_by_emails)))
 
         has_next_page = repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]
         variables_for_repos_query["cursor"] = repos_data["organization"]["repositories"]["pageInfo"]["endCursor"]
 
-    return commiters
+    return authors_by_emails
+
 
 def get_client():
     authorization_header = {"Authorization": f"Bearer {TOKEN}"}
@@ -132,32 +128,9 @@ def get_client():
     return Client(transport=transport)
 
 
-def process_stat(stat):
-    authors = []
-    commits_counts = []
-    for email, author_info in stat:
-        authors.append(f'{author_info["name"]} ({email})')
-        commits_counts.append(author_info["commits_count"])
-    return authors, commits_counts
-
-
-def draw_diagram(stat):
-    authors, commits_counts = process_stat(stat)
-    plt.figure(figsize=(8, 16))
-    sns.barplot(x=commits_counts, y=authors, hue=commits_counts, palette="viridis", legend=False)
-    plt.xlabel('Число коммитов')
-    plt.title(f'Топ 100 авторов коммитов {ORGANIZATION}')
-    plt.xticks(fontsize=9)
-    plt.yticks(fontsize=9)
-    plt.yticks(np.arange(len(authors)), labels=authors, rotation=0)
-    plt.tight_layout()
-    plt.savefig(f'top_100_{ORGANIZATION}_commiters.jpg', dpi=300, bbox_inches='tight')
-    plt.show()
-
-
 async def main():
     commiters = await get_commiters()
-    top_100_commiters = commiters.get_top_100()
+    top_100_commiters = get_top_100(commiters)
     draw_diagram(top_100_commiters)
 
 
