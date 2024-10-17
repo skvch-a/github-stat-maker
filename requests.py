@@ -1,7 +1,5 @@
 from gql import gql
 
-GRAPHQL_URL = "https://api.github.com/graphql"
-
 REPOS_QUERY = gql(
     """
     query($org: String!, $cursor: String) {
