@@ -76,11 +76,12 @@ async def get_commits_for_branch(repo_name, branch_name, client, processed_commi
 async def get_commiters():
     commiters = Commiters()
     variables_for_repos_query = {"org": ORGANIZATION}
-    client = get_client()
+
     repo_count = 1
     has_next_page = True
 
     while has_next_page:
+        client = get_client()
         repos_data = await client.execute_async(REPOS_QUERY, variable_values=variables_for_repos_query)
 
         tasks = []
@@ -102,6 +103,7 @@ async def get_commiters():
 
         has_next_page = repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]
         variables_for_repos_query["cursor"] = repos_data["organization"]["repositories"]["pageInfo"]["endCursor"]
+        await client.transport.close()
 
     return commiters
 
@@ -109,12 +111,6 @@ def get_client():
     authorization_header = {"Authorization": f"Bearer {TOKEN}"}
     transport = AIOHTTPTransport(url=GRAPHQL_URL, headers=authorization_header)
     return Client(transport=transport, fetch_schema_from_transport=True)
-
-
-async def main():
-    commiters = await get_commiters()
-    top_100_commiters = commiters.get_top_100()
-    draw_diagram(top_100_commiters)
 
 
 def process_stat(stat):
@@ -138,6 +134,13 @@ def draw_diagram(stat):
     plt.tight_layout()
     plt.savefig(f'top_100_{ORGANIZATION}_commiters.jpg', dpi=300, bbox_inches='tight')
     plt.show()
+
+
+async def main():
+    commiters = await get_commiters()
+    top_100_commiters = commiters.get_top_100()
+    draw_diagram(top_100_commiters)
+
 
 if __name__ == '__main__':
     asyncio.run(main())
