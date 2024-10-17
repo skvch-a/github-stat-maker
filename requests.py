@@ -6,7 +6,7 @@ REPOS_QUERY = gql(
     """
     query($org: String!, $cursor: String) {
       organization(login: $org) {
-        repositories(first: 5, after: $cursor) { 
+        repositories(first: 10, after: $cursor) { 
           pageInfo {
             endCursor
             hasNextPage
@@ -24,7 +24,7 @@ BRANCHES_QUERY = gql(
     """
     query($repo: String!, $cursor: String, $owner: String!) {
       repository(name: $repo, owner: $owner) {
-        refs(first: 3, after: $cursor, refPrefix: "refs/heads/") {  
+        refs(first: 100, after: $cursor, refPrefix: "refs/heads/") {  
           pageInfo {
             endCursor
             hasNextPage
@@ -45,7 +45,7 @@ COMMITS_QUERY = gql(
         ref(qualifiedName: $branch) {
           target {
             ... on Commit {
-              history(first: 5, after: $cursor) {  
+              history(first: 100, after: $cursor) {  
                 pageInfo {
                   endCursor
                   hasNextPage
