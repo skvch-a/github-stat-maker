@@ -5,6 +5,8 @@ import seaborn as sns
 
 from gql import Client
 from gql.transport.aiohttp import AIOHTTPTransport
+from pandas.plotting import table
+
 from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY
 
 TOKEN = "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"
@@ -29,9 +31,11 @@ class Commiters:
                 self._authors_by_emails[email] = {"name": name, "commits_count": 1}
 
 
-async def get_branch_names(repo_name, client):
+async def get_branch_names(repo_name):
     branches_names = []
     cursor = None
+    client = get_client()
+
     while True:
         response = await client.execute_async(BRANCHES_QUERY, variable_values={"repo": repo_name, "cursor": cursor, "owner": ORGANIZATION})
         branches = response["repository"]["refs"]
@@ -42,6 +46,7 @@ async def get_branch_names(repo_name, client):
 
         cursor = branches["pageInfo"]["endCursor"]
 
+    await client.close_async()
     return branches_names
 
 async def get_commits_for_branch(repo_name, branch_name, processed_commits):
@@ -75,6 +80,22 @@ async def get_commits_for_branch(repo_name, branch_name, processed_commits):
 
     return all_commits
 
+async def get_branches(repos_data):
+    tasks = []
+    for repo in repos_data["organization"]["repositories"]["nodes"]:
+        tasks.append(asyncio.create_task(get_branch_names(repo["name"])))
+    return await asyncio.gather(*tasks)
+
+
+async def process_repo(repo_name):
+    processed_commits = set()
+    tasks = []
+    for branch_name in await get_branch_names(repo_name):
+        task = asyncio.create_task(get_commits_for_branch(repo_name, branch_name, processed_commits))
+        tasks.append(task)
+    return await asyncio.gather(*tasks)
+
+
 async def get_commiters():
     commiters = Commiters()
     variables_for_repos_query = {"org": ORGANIZATION}
@@ -86,30 +107,22 @@ async def get_commiters():
     while has_next_page:
         client = get_client()
         repos_data = await client.execute_async(REPOS_QUERY, variable_values=variables_for_repos_query)
-
+        await client.transport.close()
         tasks = []
 
 
         for repo in repos_data["organization"]["repositories"]["nodes"]:
             print(f'Обрабатывается репозиторий: {repo_count} - {repo["name"]}')
             repo_count += 1
-            processed_commits = set()
-            branch_count = 1
-
-            for branch_name in await get_branch_names(repo["name"], client):
-                print(f'\rОбрабатывается ветка: {branch_count} - {branch_name}                     ', end='')
-                branch_count += 1
-                task = asyncio.create_task(get_commits_for_branch(repo["name"], branch_name, processed_commits))
-                tasks.append(task)
-            print()
+            tasks.append(asyncio.create_task(process_repo(repo["name"])))
 
         commit_histories = await asyncio.gather(*tasks)
         for commit_history in commit_histories:
-            commiters.update(commit_history)
+            for commit in commit_history:
+                commiters.update(commit)
 
         has_next_page = repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]
         variables_for_repos_query["cursor"] = repos_data["organization"]["repositories"]["pageInfo"]["endCursor"]
-        await client.transport.close()
 
     return commiters
 
