@@ -10,7 +10,6 @@ from stat_processor import process_stat
 from commiters_data import CommitersData
 from processed_commits import ProcessedCommits
 
-SEM = asyncio.Semaphore(8)
 
 async def try_get_response(client, query, variables):
     try:
@@ -45,8 +44,8 @@ async def get_branch_names(repo_name):
     return branches_names
 
 
-async def get_commits_for_branch(repo_name, branch_name, processed_commits, commiters_data):
-    async with SEM:
+async def get_commits_for_branch(repo_name, branch_name, processed_commits, commiters_data, sem):
+    async with sem:
         all_commits = []
         is_over = False
         cursor = None
@@ -86,25 +85,26 @@ async def get_commiters_data():
     cursor = None
     repo_count = 1
     client = get_client()
+    sem = asyncio.Semaphore(8)
 
     while True:
-        tasks = []
         repos_data = await try_get_response(client, REPOS_QUERY, {"cursor": cursor, "org": ORGANIZATION})
 
         if repos_data is None:
             break
 
         for repo in repos_data["organization"]["repositories"]["nodes"]:
+            tasks = []
             print(f'Обрабатывается репозиторий: {repo_count} - {repo["name"]}')
             repo_count += 1
             processed_commits = ProcessedCommits()
             repo_name = repo["name"]
             for branch_name in await get_branch_names(repo_name):
                 task = asyncio.create_task(
-                    get_commits_for_branch(repo_name, branch_name, processed_commits, commiters_data))
+                    get_commits_for_branch(repo_name, branch_name, processed_commits, commiters_data, sem))
                 tasks.append(task)
+            await asyncio.gather(*tasks)
 
-        await asyncio.gather(*tasks)
 
         if not repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]:
             break
