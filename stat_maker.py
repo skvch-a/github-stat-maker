@@ -10,10 +10,12 @@ from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION
 sem = asyncio.Semaphore(8)
 TOKEN = "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"
 GRAPHQL_URL = "https://api.github.com/graphql"
-REPOS_OVER = {}
+GET_RESPONSE_LOCK_FOR_TRANSPORT_QUERY_ERROR = asyncio.Lock()
+
 
 def get_top_100(authors_by_emails):
     return sorted(authors_by_emails.items(), key=lambda x: x[1]["commits_count"], reverse=True)[:100]
+
 
 async def update_authors(authors_by_emails, commits, lock):
     for commit in commits:
@@ -31,13 +33,15 @@ async def try_get_response(client, query, variables):
     try:
         return await client.execute_async(query, variable_values=variables)
     except TransportQueryError:
-        tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        print('Rate limit exceeded, try again later or change TOKEN')
-        exit()
-    except Exception:
-        print(f'Непонятная ошибка на запросе {variables}')
-
+        async with GET_RESPONSE_LOCK_FOR_TRANSPORT_QUERY_ERROR:
+            for task in asyncio.all_tasks():
+                if task is not asyncio.current_task():
+                    task.cancel()
+            print('Rate limit exceeded, try again later or change TOKEN')
+            exit()
+    except Exception as e:
+        print(f'Ошибка {e} на запросе {variables}, повтор запроса')
+        return await try_get_response(client, query, variables)
 
 
 async def get_branch_names(repo_name):
@@ -57,47 +61,46 @@ async def get_branch_names(repo_name):
 
         cursor = branches["pageInfo"]["endCursor"]
 
+
     await client.close_async()
     return branches_names
 
 
 async def get_commits_for_branch(repo_name, branch_name, processed_commits, authors_by_emails, lock):
-    if repo_name in REPOS_OVER:
-        return []
-    async with sem:
-        all_commits = []
-        is_over = False
-        cursor = None
-        client = get_client()
-        while True:
-            response = await try_get_response(client, COMMITS_QUERY,
-                                             {"repo": repo_name,
-                                                       "branch": "refs/heads/" + branch_name,
-                                                       "cursor": cursor,
-                                                       "owner": ORGANIZATION})
-            if response is None:
-                break
-            commit_history = response["repository"]["ref"]["target"]["history"]
-            k = 0
-            for commit in commit_history["nodes"]:
-                if commit["oid"] in processed_commits:
-                    if k == 0:
-                        REPOS_OVER[repo_name] = True
-                    is_over = True
+    try:
+        async with sem:
+            all_commits = []
+            is_over = False
+            cursor = None
+            client = get_client()
+            while True:
+                response = await try_get_response(client, COMMITS_QUERY,
+                                                 {"repo": repo_name,
+                                                           "branch": "refs/heads/" + branch_name,
+                                                           "cursor": cursor,
+                                                           "owner": ORGANIZATION})
+                if response is None:
                     break
-                if commit["message"].startswith("Merge pull request #"):
-                    continue
-                processed_commits.add(commit["oid"])
-                all_commits.append(commit)
+                commit_history = response["repository"]["ref"]["target"]["history"]
+                for commit in commit_history["nodes"]:
+                    if commit["oid"] in processed_commits:
+                        is_over = True
+                        break
+                    if commit["message"].startswith("Merge pull request #"):
+                        continue
+                    processed_commits.add(commit["oid"])
+                    all_commits.append(commit)
 
-            if not commit_history["pageInfo"]["hasNextPage"] or is_over:
-                break
+                if not commit_history["pageInfo"]["hasNextPage"] or is_over:
+                    break
 
-            cursor = commit_history["pageInfo"]["endCursor"]
+                cursor = commit_history["pageInfo"]["endCursor"]
 
-        await client.close_async()
-        await update_authors(authors_by_emails, all_commits, lock)
+            await client.close_async()
+            await update_authors(authors_by_emails, all_commits, lock)
 
+    except asyncio.CancelledError:
+        return
 
 
 async def get_commiters():

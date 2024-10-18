@@ -1,6 +1,6 @@
 from gql import gql
 
-ORGANIZATION = "Tinkoff"
+ORGANIZATION = "godaddy"
 
 REPOS_QUERY = gql(
     """
@@ -51,7 +51,7 @@ COMMITS_QUERY = gql(
                   hasNextPage
                 }
                 nodes {
-                  oid  
+                  oid
                   message
                   author {
                     email
