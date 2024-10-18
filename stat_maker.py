@@ -5,12 +5,10 @@ from gql import Client
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportQueryError
 
-from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION
-from visualizer import draw_diagram
+from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
+from stat_processor import process_stat
 
-sem = asyncio.Semaphore(8)
-TOKEN = "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"
-GRAPHQL_URL = "https://api.github.com/graphql"
+SEM = asyncio.Semaphore(8)
 
 async def update_authors(authors_by_emails, commits, lock):
     for commit in commits:
@@ -56,7 +54,7 @@ async def get_branch_names(repo_name):
 
 
 async def get_commits_for_branch(repo_name, branch_name, processed_commits, authors_by_emails, lock):
-    async with sem:
+    async with SEM:
         all_commits = []
         is_over = False
         cursor = None
@@ -130,11 +128,10 @@ async def get_authors_by_emails():
 def get_client():
     return Client(transport=AIOHTTPTransport(url=GRAPHQL_URL, headers={"Authorization": f"Bearer {TOKEN}"}))
 
-
 async def main():
     authors_by_emails = await get_authors_by_emails()
     top_100_commiters = sorted(authors_by_emails.items(), key=lambda x: x[1]["commits_count"], reverse=True)[:100]
-    draw_diagram(top_100_commiters)
+    process_stat(top_100_commiters)
 
 
 if __name__ == '__main__':
