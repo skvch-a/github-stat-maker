@@ -4,17 +4,13 @@ from gql import Client
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportQueryError
 
-from visualizer import draw_diagram
 from requests import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION
+from visualizer import draw_diagram
 
 sem = asyncio.Semaphore(8)
 TOKEN = "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"
 GRAPHQL_URL = "https://api.github.com/graphql"
 GET_RESPONSE_LOCK_FOR_TRANSPORT_QUERY_ERROR = asyncio.Lock()
-
-
-def get_top_100(authors_by_emails):
-    return sorted(authors_by_emails.items(), key=lambda x: x[1]["commits_count"], reverse=True)[:100]
 
 
 async def update_authors(authors_by_emails, commits, lock):
@@ -50,7 +46,8 @@ async def get_branch_names(repo_name):
     client = get_client()
     while True:
 
-        response = await try_get_response(client, BRANCHES_QUERY, {"repo": repo_name, "cursor": cursor, "owner": ORGANIZATION})
+        response = await try_get_response(client, BRANCHES_QUERY,
+                                          {"repo": repo_name, "cursor": cursor, "owner": ORGANIZATION})
         if response is None:
             break
         branches = response["repository"]["refs"]
@@ -60,7 +57,6 @@ async def get_branch_names(repo_name):
             break
 
         cursor = branches["pageInfo"]["endCursor"]
-
 
     await client.close_async()
     return branches_names
@@ -73,16 +69,18 @@ async def get_commits_for_branch(repo_name, branch_name, processed_commits, auth
             is_over = False
             cursor = None
             client = get_client()
+
             while True:
                 response = await try_get_response(client, COMMITS_QUERY,
-                                                 {"repo": repo_name,
-                                                           "branch": "refs/heads/" + branch_name,
-                                                           "cursor": cursor,
-                                                           "owner": ORGANIZATION})
+                                                  {"repo": repo_name,
+                                                   "branch": "refs/heads/" + branch_name,
+                                                   "cursor": cursor,
+                                                   "owner": ORGANIZATION})
                 if response is None:
                     break
-                commit_history = response["repository"]["ref"]["target"]["history"]
-                for commit in commit_history["nodes"]:
+
+                commits = response["repository"]["ref"]["target"]["history"]
+                for commit in commits["nodes"]:
                     if commit["oid"] in processed_commits:
                         is_over = True
                         break
@@ -91,10 +89,10 @@ async def get_commits_for_branch(repo_name, branch_name, processed_commits, auth
                     processed_commits.add(commit["oid"])
                     all_commits.append(commit)
 
-                if not commit_history["pageInfo"]["hasNextPage"] or is_over:
+                if not commits["pageInfo"]["hasNextPage"] or is_over:
                     break
 
-                cursor = commit_history["pageInfo"]["endCursor"]
+                cursor = commits["pageInfo"]["endCursor"]
 
             await client.close_async()
             await update_authors(authors_by_emails, all_commits, lock)
@@ -103,18 +101,20 @@ async def get_commits_for_branch(repo_name, branch_name, processed_commits, auth
         return
 
 
-async def get_commiters():
+async def get_authors_by_emails():
     authors_by_emails = {}
-    variables_for_repos_query = {"org": ORGANIZATION}
-    client = get_client()
+    cursor = None
     repo_count = 1
-    has_next_page = True
-    lock = asyncio.Lock()
-    while has_next_page:
+    client = get_client()
+    authors_update_lock = asyncio.Lock()
+
+    while True:
         tasks = []
-        repos_data = await try_get_response(client, REPOS_QUERY, variables_for_repos_query)
+        repos_data = await try_get_response(client, REPOS_QUERY, {"cursor": cursor, "org": ORGANIZATION})
+
         if repos_data is None:
             break
+
         for repo in repos_data["organization"]["repositories"]["nodes"]:
             print(f'Обрабатывается репозиторий: {repo_count} - {repo["name"]}')
             repo_count += 1
@@ -122,30 +122,30 @@ async def get_commiters():
             repo_name = repo["name"]
             for branch_name in await get_branch_names(repo_name):
                 task = asyncio.create_task(
-                    get_commits_for_branch(repo_name, branch_name, processed_commits, authors_by_emails, lock))
+                    get_commits_for_branch(repo_name, branch_name, processed_commits, authors_by_emails,
+                                           authors_update_lock))
                 tasks.append(task)
 
         await asyncio.gather(*tasks)
 
-        has_next_page = repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]
-        variables_for_repos_query["cursor"] = repos_data["organization"]["repositories"]["pageInfo"]["endCursor"]
+        if not repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]:
+            break
+
+        cursor = repos_data["organization"]["repositories"]["pageInfo"]["endCursor"]
 
     await client.close_async()
     return authors_by_emails
 
 
 def get_client():
-    authorization_header = {"Authorization": f"Bearer {TOKEN}"}
-    transport = AIOHTTPTransport(url=GRAPHQL_URL, headers=authorization_header)
-    return Client(transport=transport)
+    return Client(transport=AIOHTTPTransport(url=GRAPHQL_URL, headers={"Authorization": f"Bearer {TOKEN}"}))
 
 
 async def main():
-    commiters = await get_commiters()
-    top_100_commiters = get_top_100(commiters)
+    authors_by_emails = await get_authors_by_emails()
+    top_100_commiters = sorted(authors_by_emails.items(), key=lambda x: x[1]["commits_count"], reverse=True)[:100]
     draw_diagram(top_100_commiters)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
-
