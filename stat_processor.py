@@ -2,18 +2,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
-from requests import ORGANIZATION
+from constants import ORGANIZATION
 
 def process_stat(stat):
     authors = []
     commit_counts = []
     k = 1
+    print('Результаты: ')
     with open(f'{ORGANIZATION}_stat.txt', 'w') as file:
         for email, author_info in stat:
             author_str = f'{author_info["name"]} ({email})'
-            file.write(f'{k}. {author_str}\n')
+            stat_str = f'{k}. {author_str} - {author_info["commits_count"]} коммитов'
+            file.write(stat_str + '\n')
             k += 1
-            print(author_str)
+            print(stat_str)
             authors.append(f'{author_info["name"]} ({email})')
             commit_counts.append(author_info["commits_count"])
     draw_diagram(authors, commit_counts)
