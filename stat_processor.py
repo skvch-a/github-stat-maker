@@ -2,9 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
+from typing import List, Dict, Any
 from constants import ORGANIZATION
 
-def process_stat(stat):
+def process_stat(stat: Dict[str, Dict[str, Any]]) -> None:
     authors = []
     commit_counts = []
     k = 1
@@ -21,7 +22,7 @@ def process_stat(stat):
     draw_diagram(authors, commit_counts)
 
 
-def draw_diagram(authors, commit_counts):
+def draw_diagram(authors: List[str], commit_counts: List[int]) -> None:
     plt.figure(figsize=(8, 16))
     sns.barplot(x=commit_counts, y=authors, hue=commit_counts, palette="viridis", legend=False)
     plt.xlabel('Число коммитов')

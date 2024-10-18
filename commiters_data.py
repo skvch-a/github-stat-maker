@@ -1,8 +1,9 @@
 from asyncio import Lock
+from typing import Dict, Any
 
 class CommitersData:
     def __init__(self):
-        self._authors_by_emails = {}
+        self._authors_by_emails: Dict[str, Dict[str, Any]] = {}
         self._lock = Lock()
 
     def get_top_100(self):

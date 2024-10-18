@@ -1,31 +1,33 @@
-import sys
 import asyncio
+import sys
+from typing import List, Dict
 
 from gql import Client
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportQueryError, TransportServerError
+from graphql import DocumentNode
 
-from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
-from stat_processor import process_stat
 from commiters_data import CommitersData
+from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
 from processed_commits import ProcessedCommits
+from stat_processor import process_stat
 
 
-async def try_get_response(client, query, variables, sem):
+async def try_get_response(client: Client, query: DocumentNode, variables: Dict, sem: asyncio.Semaphore):
     try:
         async with sem:
             return await client.execute_async(query, variable_values=variables)
     except TransportQueryError:
         sys.exit('Rate limit exceeded, try again later or change TOKEN')
     except TransportServerError:
-        print('Слишко много одноврменных запросов! Уменьшите значение asincio.Semaphore!')
+        print('Слишком много одновременных запросов! Уменьшите значение asincio.Semaphore!')
         return await try_get_response(client, query, variables, sem)
     except Exception as e:
         print(f'Ошибка {e} на запросе {variables}, повтор запроса')
         return await try_get_response(client, query, variables, sem)
 
 
-async def get_branch_names(repo_name, sem):
+async def get_branch_names(repo_name: str, sem: asyncio.Semaphore) -> List[str]:
     branch_names = []
     client = get_client()
     query_variables = {"repo": repo_name, "owner": ORGANIZATION}
@@ -48,13 +50,12 @@ async def get_branch_names(repo_name, sem):
     return branch_names
 
 
-async def get_commits_for_branch(repo_name, branch_name, processed_commits, commiters_data, sem):
-    all_commits = []
-    is_over = False
+async def process_commits(repo_name: str, branch_name: str, processed_commits: ProcessedCommits,
+                          commiters_data: CommitersData, sem: asyncio.Semaphore) -> None:
+    commits = []
+    is_commits_already_processed = False
     client = get_client()
-    query_variables = {"repo": repo_name,
-                       "branch": "refs/heads/" + branch_name,
-                       "owner": ORGANIZATION}
+    query_variables = {"repo": repo_name, "branch": "refs/heads/" + branch_name, "owner": ORGANIZATION}
 
     while True:
         response = await try_get_response(client, COMMITS_QUERY, query_variables, sem)
@@ -65,29 +66,28 @@ async def get_commits_for_branch(repo_name, branch_name, processed_commits, comm
         commits = response["repository"]["ref"]["target"]["history"]
         for commit in commits["nodes"]:
             if await  processed_commits.contains(commit["oid"]):
-                is_over = True
+                is_commits_already_processed = True
                 break
             if commit["message"].startswith("Merge pull request #"):
                 continue
             await processed_commits.add(commit["oid"])
-            all_commits.append(commit)
+            commits.append(commit)
 
-        if not commits["pageInfo"]["hasNextPage"] or is_over:
+        if not commits["pageInfo"]["hasNextPage"] or is_commits_already_processed:
             break
 
         query_variables["cursor"] = commits["pageInfo"]["endCursor"]
 
     await client.close_async()
-    await commiters_data.update(all_commits)
+    await commiters_data.update(commits)
 
 
-
-async def get_commiters_data():
+async def get_commiters_data() -> CommitersData:
     commiters_data = CommitersData()
     cursor = None
     repo_count = 1
     client = get_client()
-    sem = asyncio.Semaphore(40)
+    sem = asyncio.Semaphore(10)
     tasks = []
 
     while True:
@@ -102,15 +102,15 @@ async def get_commiters_data():
             processed_commits = ProcessedCommits()
             repo_name = repo["name"]
             for branch_name in await get_branch_names(repo_name, sem):
-                task = asyncio.create_task(
-                    get_commits_for_branch(repo_name, branch_name, processed_commits, commiters_data, sem))
-                tasks.append(task)
+                tasks.append(asyncio.create_task(
+                    process_commits(repo_name, branch_name, processed_commits, commiters_data, sem)))
 
         if not repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]:
             break
 
         cursor = repos_data["organization"]["repositories"]["pageInfo"]["endCursor"]
 
+    print('Завершение обработки...')
     await asyncio.gather(*tasks)
     await client.close_async()
     return commiters_data
