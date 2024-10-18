@@ -8,7 +8,7 @@ REPOS_QUERY = gql(
     """
     query($org: String!, $cursor: String) {
       organization(login: $org) {
-        repositories(first: 10, after: $cursor) { 
+        repositories(first: 50, after: $cursor) { 
           pageInfo {
             endCursor
             hasNextPage
