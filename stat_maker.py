@@ -1,11 +1,11 @@
 import asyncio
 import sys
-from typing import List, Dict
 
 from gql import Client
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import TransportQueryError, TransportServerError
 from graphql import DocumentNode
+from typing import List, Dict
 
 from commiters_data import CommitersData
 from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
@@ -52,7 +52,7 @@ async def get_branch_names(repo_name: str, sem: asyncio.Semaphore) -> List[str]:
 
 async def process_commits(repo_name: str, branch_name: str, processed_commits: ProcessedCommits,
                           commiters_data: CommitersData, sem: asyncio.Semaphore) -> None:
-    commits = []
+    all_commits = []
     is_commits_already_processed = False
     client = get_client()
     query_variables = {"repo": repo_name, "branch": "refs/heads/" + branch_name, "owner": ORGANIZATION}
@@ -63,23 +63,23 @@ async def process_commits(repo_name: str, branch_name: str, processed_commits: P
         if response is None:
             break
 
-        commits = response["repository"]["ref"]["target"]["history"]
-        for commit in commits["nodes"]:
+        commits_from_response = response["repository"]["ref"]["target"]["history"]
+        for commit in commits_from_response["nodes"]:
             if await  processed_commits.contains(commit["oid"]):
                 is_commits_already_processed = True
                 break
             if commit["message"].startswith("Merge pull request #"):
                 continue
             await processed_commits.add(commit["oid"])
-            commits.append(commit)
+            all_commits.append(commit)
 
-        if not commits["pageInfo"]["hasNextPage"] or is_commits_already_processed:
+        if not commits_from_response["pageInfo"]["hasNextPage"] or is_commits_already_processed:
             break
 
-        query_variables["cursor"] = commits["pageInfo"]["endCursor"]
+        query_variables["cursor"] = commits_from_response["pageInfo"]["endCursor"]
 
     await client.close_async()
-    await commiters_data.update(commits)
+    await commiters_data.update(all_commits)
 
 
 async def get_commiters_data() -> CommitersData:
