@@ -1,7 +1,7 @@
 from gql import gql
 
 ORGANIZATION = "godaddy"
-TOKEN = "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"
+TOKEN = "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"
 GRAPHQL_URL = "https://api.github.com/graphql"
 
 REPOS_QUERY = gql(

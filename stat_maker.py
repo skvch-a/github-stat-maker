@@ -50,9 +50,8 @@ async def get_branch_names(repo_name: str, sem: asyncio.Semaphore) -> List[str]:
     return branch_names
 
 
-async def process_commits(repo_name: str, branch_name: str, processed_commits: ProcessedCommits,
-                          commiters_data: CommitersData, sem: asyncio.Semaphore) -> None:
-    all_commits = []
+async def process_commits(repo_name, branch_name, processed_commits, commiters_data, sem: asyncio.Semaphore) -> None:
+    tasks = []
     is_commits_already_processed = False
     client = get_client()
     query_variables = {"repo": repo_name, "branch": "refs/heads/" + branch_name, "owner": ORGANIZATION}
@@ -71,15 +70,15 @@ async def process_commits(repo_name: str, branch_name: str, processed_commits: P
             if commit["message"].startswith("Merge pull request #"):
                 continue
             await processed_commits.add(commit["oid"])
-            all_commits.append(commit)
+            tasks.append(asyncio.create_task(commiters_data.update(commit)))
 
         if not commits_from_response["pageInfo"]["hasNextPage"] or is_commits_already_processed:
             break
 
         query_variables["cursor"] = commits_from_response["pageInfo"]["endCursor"]
 
+    await asyncio.gather(*tasks)
     await client.close_async()
-    await commiters_data.update(all_commits)
 
 
 async def get_commiters_data() -> CommitersData:
