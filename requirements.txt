@@ -1,0 +1,5 @@
+gql~=3.5.0
+graphql-core~=3.2.5
+matplotlib~=3.9.2
+numpy~=2.1.2
+seaborn~=0.13.2

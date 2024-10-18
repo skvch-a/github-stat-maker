@@ -8,7 +8,7 @@ from graphql import DocumentNode
 from typing import List, Dict
 
 from commiters_data import CommitersData
-from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
+from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, GRAPHQL_URL
 from processed_commits import ProcessedCommits
 from stat_processor import process_stat
 
@@ -50,7 +50,7 @@ async def get_branch_names(repo_name: str, sem: asyncio.Semaphore) -> List[str]:
     return branch_names
 
 
-async def process_commits(repo_name, branch_name, processed_commits, commiters_data, sem: asyncio.Semaphore) -> None:
+async def process_branch(repo_name, branch_name, processed_commits, commiters_data, sem: asyncio.Semaphore) -> None:
     tasks = []
     is_commits_already_processed = False
     client = get_client()
@@ -86,7 +86,7 @@ async def get_commiters_data() -> CommitersData:
     cursor = None
     repo_count = 1
     client = get_client()
-    sem = asyncio.Semaphore(10)
+    sem = asyncio.Semaphore(8)
     tasks = []
 
     while True:
@@ -102,7 +102,7 @@ async def get_commiters_data() -> CommitersData:
             repo_name = repo["name"]
             for branch_name in await get_branch_names(repo_name, sem):
                 tasks.append(asyncio.create_task(
-                    process_commits(repo_name, branch_name, processed_commits, commiters_data, sem)))
+                    process_branch(repo_name, branch_name, processed_commits, commiters_data, sem)))
 
         if not repos_data["organization"]["repositories"]["pageInfo"]["hasNextPage"]:
             break
@@ -122,8 +122,10 @@ def get_client():
 async def main():
     commiters_data = await get_commiters_data()
     top_100_commiters = commiters_data.get_top_100()
-    process_stat(top_100_commiters)
+    process_stat(top_100_commiters, ORGANIZATION)
 
 
 if __name__ == '__main__':
+    ORGANIZATION = input('Введите организацию: ')
+    TOKEN = input('Введите GITHUB TOKEN (для повышения rate limit): ')
     asyncio.run(main())
