@@ -3,7 +3,7 @@ import numpy as np
 import seaborn as sns
 
 from typing import List, Dict, Any
-from constants import ORGANIZATION
+from stat_maker.constants import ORGANIZATION
 
 
 def process_stat(stat: Dict[str, Dict[str, Any]]) -> None:

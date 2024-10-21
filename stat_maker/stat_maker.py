@@ -7,8 +7,8 @@ from gql.transport.exceptions import TransportQueryError, TransportServerError
 from graphql import DocumentNode
 from typing import Dict
 
-from commiters_data import CommitersData
-from constants import REPOS_QUERY, BRANCHES_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
+from stat_maker.commiters_data import CommitersData
+from stat_maker.constants import REPOS_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
 from stat_processor import process_stat
 
 
@@ -26,58 +26,28 @@ async def try_get_response(client: Client, query: DocumentNode, variables: Dict,
         return await try_get_response(client, query, variables, sem)
 
 
-async def process_repo(repo_name: str, commiters_data, sem: asyncio.Semaphore) -> None:
+async def process_repo(repo_name, commiters_data, sem: asyncio.Semaphore) -> None:
     tasks = []
     client = get_client()
     query_variables = {"repo": repo_name, "owner": ORGANIZATION}
 
     while True:
-        response = await try_get_response(client, BRANCHES_QUERY, query_variables, sem)
-
-        if response is None:
-            break
-
-        branches = response["repository"]["refs"]
-        for branch in branches['nodes']:
-            tasks.append(asyncio.create_task(process_branch(repo_name, branch['name'], commiters_data, sem)))
-
-        if not branches["pageInfo"]["hasNextPage"]:
-            break
-
-        query_variables["cursor"] = branches["pageInfo"]["endCursor"]
-
-    await asyncio.gather(*tasks)
-    await client.close_async()
-    print(f"Обработан репозиторий {repo_name}")
-
-
-async def process_branch(repo_name, branch_name, commiters_data, sem: asyncio.Semaphore) -> None:
-    tasks = []
-    client = get_client()
-    is_branch_repeats = False
-    query_variables = {"repo": repo_name, "branch": "refs/heads/" + branch_name, "owner": ORGANIZATION}
-
-    while True:
         response = await try_get_response(client, COMMITS_QUERY, query_variables, sem)
-        commits_from_response = response["repository"]["ref"]["target"]["history"]
+        commits_from_response = response["repository"]["defaultBranchRef"]["target"]["history"]
 
         for commit in commits_from_response["nodes"]:
-            if await commiters_data.contains_commit(commit["oid"]):
-                is_branch_repeats = True
-                break
-
             if commit["message"].startswith("Merge pull request #"):
                 continue
-
             tasks.append(asyncio.create_task(commiters_data.update(commit)))
 
-        if is_branch_repeats or not commits_from_response["pageInfo"]["hasNextPage"]:
+        if not commits_from_response["pageInfo"]["hasNextPage"]:
             break
 
         query_variables["cursor"] = commits_from_response["pageInfo"]["endCursor"]
 
     await asyncio.gather(*tasks)
     await client.close_async()
+    print(f'Обработан репозиторий {repo_name}')
 
 
 async def get_commiters_data() -> CommitersData:
@@ -89,9 +59,6 @@ async def get_commiters_data() -> CommitersData:
 
     while True:
         repos_data = await try_get_response(client, REPOS_QUERY, {"cursor": cursor, "org": ORGANIZATION}, sem)
-
-        if repos_data is None:
-            break
 
         for repo in repos_data["organization"]["repositories"]["nodes"]:
             tasks.append(asyncio.create_task(process_repo(repo["name"], commiters_data, sem)))
