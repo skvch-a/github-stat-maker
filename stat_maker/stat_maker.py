@@ -7,8 +7,8 @@ from gql.transport.exceptions import TransportQueryError, TransportServerError
 from graphql import DocumentNode
 from typing import Dict
 
-from stat_maker.commiters_data import CommitersData
-from stat_maker.constants import REPOS_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
+from commiters_data import CommitersData
+from constants import REPOS_QUERY, COMMITS_QUERY, ORGANIZATION, TOKEN, GRAPHQL_URL
 from stat_processor import process_stat
 
 
